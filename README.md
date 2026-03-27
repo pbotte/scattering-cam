@@ -53,10 +53,42 @@ Dabei wird im Live-Bild die Spur der letzten 3 Sekunden pro Track eingezeichnet.
 Hinweis zu YOLOE:
 Falls das Initialisieren des Text-Prompts fehlschlaegt, fehlen meist YOLOE-spezifische Textmodell-Abhaengigkeiten. In aktuellen Ultralytics-Setups wird dafuer haeufig das GitHub-Paket `clip` benoetigt, nicht das gleichnamige PyPI-Paket.
 
-# Was funktionerte:
+# YOLO-E:
 
 ```bash
 python live_yoloe.py --model yoloe-11s-seg.pt --camera-index 1 --mode track --prompt "metal ball"
 ```
 
 ![yolo e demo](images/yoloe_demo.png)
+
+
+# Fine train with one class using YOLO
+
+
+## Step by Step:
+1. make pictures
+2. Install [label-studio](https://labelstud.io) to create label dataset  
+   ```bash
+   brew install python@3.13
+   /opt/homebrew/bin/python3.13 -m venv .venv
+   . .venv/bin/activate
+   python -m pip install -U pip setuptools wheel
+   python -m pip install label-studio
+   label-studio
+   ```
+3. Create new account, create new project.
+4. Labeling Setup: `Object Detection with Bounding Boxes`
+5. export as `YOLO with Images`
+6. `python train_yolo26m.py --device mps` from this repo: https://github.com/pbotte/scattering-cam
+
+### Hints:
+- Documentation: https://docs.ultralytics.com/datasets/detect/?utm_source=chatgpt.com
+- Alternatively: https://github.com/cvat-ai/cvat
+
+## Inference
+Using this repo: https://github.com/pbotte/scattering-cam
+```bash
+python live_yolo26m.py --model runs/detect/runs/train/yolo26m-custom/weights/best.pt --camera-index 1 --mode track
+```
+
+![demo own model](images/ownmodel_demo.png)
