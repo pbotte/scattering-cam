@@ -153,6 +153,7 @@
         <input id="confidence" type="range" min="0.05" max="0.95" step="0.05" value="0.25">
         <span id="confidenceValue">0.25</span>
       </label>
+      <span id="fps">FPS: -</span>
       <span id="status">Modell noch nicht geladen.</span>
     </section>
 
@@ -175,7 +176,6 @@
     ];
     const MODEL_URL = "./runs/detect/runs/train/yolo26m-custom/weights/best_web_model/model.json";
     const INPUT_SIZE = 640;
-
     const video = document.getElementById("video");
     const canvas = document.getElementById("overlay");
     const stage = document.querySelector(".stage");
@@ -184,6 +184,7 @@
     const stopButton = document.getElementById("stopButton");
     const cameraSelect = document.getElementById("cameraSelect");
     const statusEl = document.getElementById("status");
+    const fpsEl = document.getElementById("fps");
     const confidenceInput = document.getElementById("confidence");
     const confidenceValue = document.getElementById("confidenceValue");
     const debugSummary = document.getElementById("debugSummary");
@@ -193,6 +194,7 @@
     let animationFrameId = 0;
     let stream;
     let tfReady;
+    let lastInferenceAt = 0;
     const classNames = {0: "sphere"};
 
     confidenceInput.addEventListener("input", () => {
@@ -261,7 +263,7 @@
       const maxScore = Math.max(...detections.map((det) => det[4]));
       const visibleCount = detections.filter((det) => det[4] >= Number(confidenceInput.value)).length;
       debugSummary.textContent =
-        `Rohdetektionen: ${detections.length}, max score: ${maxScore.toFixed(4)}, ` +
+        `Input: ${INPUT_SIZE}, Rohdetektionen: ${detections.length}, max score: ${maxScore.toFixed(4)}, ` +
         `ueber Schwellwert: ${visibleCount}`;
       debugOutput.textContent = JSON.stringify(detections.slice(0, 8).map(formatDetection), null, 2);
     }
@@ -284,6 +286,8 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       startButton.disabled = false;
       stopButton.disabled = true;
+      fpsEl.textContent = "FPS: -";
+      lastInferenceAt = 0;
       setStatus("Webcam und Inferenz gestoppt.");
     }
 
@@ -351,6 +355,7 @@
       }
 
       resizeCanvas();
+      const startedAt = performance.now();
 
       const input = tf.tidy(() => {
         const frame = tf.browser.fromPixels(video);
@@ -377,6 +382,11 @@
       } finally {
         input.dispose();
       }
+
+      const elapsed = performance.now() - startedAt;
+      const instantaneousFps = elapsed > 0 ? 1000 / elapsed : 0;
+      fpsEl.textContent = `FPS: ${instantaneousFps.toFixed(1)}`;
+      lastInferenceAt = startedAt;
 
       await tf.nextFrame();
       animationFrameId = requestAnimationFrame(inferFrame);
