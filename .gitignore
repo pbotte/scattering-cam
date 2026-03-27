@@ -2,3 +2,5 @@
 .pycache
 *.pt
 mobileclip_blt.ts
+dataset/.DS_Store
+/runs/*

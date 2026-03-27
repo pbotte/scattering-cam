@@ -1,0 +1,10 @@
+/Users/pbotte/git/scattering-cam/dataset/images/2483f508-IMG_3223.jpeg
+/Users/pbotte/git/scattering-cam/dataset/images/41e19e05-IMG_3226.jpeg
+/Users/pbotte/git/scattering-cam/dataset/images/4f816902-IMG_3228.jpeg
+/Users/pbotte/git/scattering-cam/dataset/images/5c007dea-IMG_3222.jpeg
+/Users/pbotte/git/scattering-cam/dataset/images/92814f06-IMG_3218.jpeg
+/Users/pbotte/git/scattering-cam/dataset/images/a25c325a-IMG_3221.jpeg
+/Users/pbotte/git/scattering-cam/dataset/images/cc1d4ee2-IMG_3219.jpeg
+/Users/pbotte/git/scattering-cam/dataset/images/e19701ed-IMG_3225.jpeg
+/Users/pbotte/git/scattering-cam/dataset/images/f0c67d63-IMG_3229.jpeg
+/Users/pbotte/git/scattering-cam/dataset/images/f8bfc839-IMG_3220.jpeg

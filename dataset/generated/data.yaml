@@ -1,0 +1,5 @@
+path: /Users/pbotte/git/scattering-cam/dataset/generated
+train: /Users/pbotte/git/scattering-cam/dataset/generated/train.txt
+val: /Users/pbotte/git/scattering-cam/dataset/generated/val.txt
+names:
+  0: sphere
