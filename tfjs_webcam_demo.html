@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YOLO TF.js Webcam Demo</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --line: #334155;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --accent: #22c55e;
+      --danger: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #172554 0%, var(--bg) 45%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }
+
+    .panel {
+      background: rgba(17, 24, 39, 0.9);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+      backdrop-filter: blur(8px);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.6rem;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 16px;
+      background: var(--accent);
+      color: #052e16;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+    }
+
+    .stage {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      border-radius: 16px;
+      background: #020617;
+      border: 1px solid var(--line);
+    }
+
+    video,
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    video {
+      z-index: 1;
+    }
+
+    #overlay {
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    #status.ok {
+      color: var(--accent);
+    }
+
+    #status.error {
+      color: var(--danger);
+    }
+
+    code {
+      color: #bfdbfe;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel">
+      <h1>YOLO TensorFlow.js Webcam Demo</h1>
+      <p>
+        Laedt das exportierte Modell aus
+        <code>runs/detect/runs/train/yolo26m-custom/weights/best_web_model/model.json</code>
+        und fuehrt Live-Erkennung auf der Webcam aus.
+      </p>
+      <p style="margin-top: 8px; color: #67e8f9;">Version: v12</p>
+    </section>
+
+    <section class="panel controls">
+      <button id="startButton">Webcam Starten</button>
+      <button id="stopButton" disabled>Stopp</button>
+      <label>
+        Kamera
+        <select id="cameraSelect"></select>
+      </label>
+      <label>
+        Confidence
+        <input id="confidence" type="range" min="0.05" max="0.95" step="0.05" value="0.25">
+        <span id="confidenceValue">0.25</span>
+      </label>
+      <span id="status">Modell noch nicht geladen.</span>
+    </section>
+
+    <section class="stage">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="overlay"></canvas>
+    </section>
+
+    <section class="panel">
+      <p id="debugSummary">Noch keine Inferenzdaten.</p>
+      <pre id="debugOutput" style="margin-top: 12px; white-space: pre-wrap; color: #cbd5e1;"></pre>
+    </section>
+  </main>
+
+  <script>
+    const TFJS_SOURCES = [
+      "./vendor/tf.min.js",
+      "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js",
+      "https://unpkg.com/@tensorflow/tfjs@4.22.0/dist/tf.min.js"
+    ];
+    const MODEL_URL = "./runs/detect/runs/train/yolo26m-custom/weights/best_web_model/model.json";
+    const INPUT_SIZE = 640;
+
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("overlay");
+    const stage = document.querySelector(".stage");
+    const ctx = canvas.getContext("2d");
+    const startButton = document.getElementById("startButton");
+    const stopButton = document.getElementById("stopButton");
+    const cameraSelect = document.getElementById("cameraSelect");
+    const statusEl = document.getElementById("status");
+    const confidenceInput = document.getElementById("confidence");
+    const confidenceValue = document.getElementById("confidenceValue");
+    const debugSummary = document.getElementById("debugSummary");
+    const debugOutput = document.getElementById("debugOutput");
+
+    let model;
+    let animationFrameId = 0;
+    let stream;
+    let tfReady;
+    const classNames = {0: "sphere"};
+
+    confidenceInput.addEventListener("input", () => {
+      confidenceValue.textContent = Number(confidenceInput.value).toFixed(2);
+    });
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error(`Script konnte nicht geladen werden: ${src}`));
+        document.head.append(script);
+      });
+    }
+
+    async function ensureTf() {
+      if (window.tf) {
+        return window.tf;
+      }
+      for (const src of TFJS_SOURCES) {
+        try {
+          const label = src.startsWith("./") ? src : new URL(src).host;
+          setStatus(`Lade TensorFlow.js von ${label}...`);
+          await loadScript(src);
+          if (window.tf) {
+            return window.tf;
+          }
+        } catch (_error) {
+          // try next source
+        }
+      }
+      throw new Error(
+        "TensorFlow.js konnte nicht geladen werden. Lege optional eine lokale Datei unter ./vendor/tf.min.js ab."
+      );
+    }
+
+    function setStatus(message, kind = "") {
+      statusEl.textContent = message;
+      statusEl.className = kind;
+    }
+
+    function resizeCanvas() {
+      const rect = stage.getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+    }
+
+    function formatDetection(det) {
+      const [x1, y1, x2, y2, score, classId] = det;
+      const label = classNames[Math.round(classId)] || `class ${Math.round(classId)}`;
+      return {
+        label,
+        score: Number(score.toFixed(4)),
+        box: [x1, y1, x2, y2].map((value) => Number(value.toFixed(1)))
+      };
+    }
+
+    function updateDebug(detections) {
+      if (!detections.length) {
+        debugSummary.textContent = "Keine Rohdetektionen im Output.";
+        debugOutput.textContent = "";
+        return;
+      }
+
+      const maxScore = Math.max(...detections.map((det) => det[4]));
+      const visibleCount = detections.filter((det) => det[4] >= Number(confidenceInput.value)).length;
+      debugSummary.textContent =
+        `Rohdetektionen: ${detections.length}, max score: ${maxScore.toFixed(4)}, ` +
+        `ueber Schwellwert: ${visibleCount}`;
+      debugOutput.textContent = JSON.stringify(detections.slice(0, 8).map(formatDetection), null, 2);
+    }
+
+    function stopStream() {
+      if (!stream) {
+        return;
+      }
+      stream.getTracks().forEach((track) => track.stop());
+      stream = undefined;
+      video.srcObject = null;
+    }
+
+    function stopInference() {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = 0;
+      }
+      stopStream();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      startButton.disabled = false;
+      stopButton.disabled = true;
+      setStatus("Webcam und Inferenz gestoppt.");
+    }
+
+    async function populateCameraList() {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cameras = devices.filter((device) => device.kind === "videoinput");
+
+      cameraSelect.innerHTML = "";
+      if (!cameras.length) {
+        const option = document.createElement("option");
+        option.textContent = "Keine Kamera gefunden";
+        option.value = "";
+        cameraSelect.append(option);
+        cameraSelect.disabled = true;
+        return;
+      }
+
+      cameras.forEach((camera, index) => {
+        const option = document.createElement("option");
+        option.value = camera.deviceId;
+        option.textContent = camera.label || `Kamera ${index + 1}`;
+        cameraSelect.append(option);
+      });
+      cameraSelect.disabled = false;
+    }
+
+    function drawDetections(detections) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.lineWidth = 3;
+      ctx.font = "16px sans-serif";
+
+      for (const det of detections) {
+        const [x1, y1, x2, y2, score, classId] = det;
+        if (score < Number(confidenceInput.value)) {
+          continue;
+        }
+
+        const scaleX = canvas.width / INPUT_SIZE;
+        const scaleY = canvas.height / INPUT_SIZE;
+        const left = x1 * scaleX;
+        const top = y1 * scaleY;
+        const width = (x2 - x1) * scaleX;
+        const height = (y2 - y1) * scaleY;
+        const className = classNames[Math.round(classId)] || `class ${Math.round(classId)}`;
+        const label = `${className} ${(score * 100).toFixed(1)}%`;
+
+        ctx.strokeStyle = "#22c55e";
+        ctx.fillStyle = "rgba(34, 197, 94, 0.28)";
+        ctx.strokeRect(left, top, width, height);
+        ctx.fillRect(left, top, width, height);
+
+        const textWidth = ctx.measureText(label).width + 10;
+        ctx.fillStyle = "#22c55e";
+        ctx.fillRect(left, Math.max(0, top - 24), textWidth, 22);
+        ctx.fillStyle = "#052e16";
+        ctx.fillText(label, left + 5, Math.max(16, top - 8));
+      }
+    }
+
+    async function inferFrame() {
+      const tf = await tfReady;
+      if (!model || video.readyState < 2) {
+        animationFrameId = requestAnimationFrame(inferFrame);
+        return;
+      }
+
+      resizeCanvas();
+
+      const input = tf.tidy(() => {
+        const frame = tf.browser.fromPixels(video);
+        const resized = tf.image.resizeBilinear(frame, [INPUT_SIZE, INPUT_SIZE]);
+        const normalized = resized.toFloat().div(255);
+        return normalized.expandDims(0);
+      });
+
+      try {
+        const output = model.execute(input);
+        const tensor = Array.isArray(output) ? output[0] : output;
+        const detections = await tensor.array();
+        const frameDetections = detections[0] || [];
+        updateDebug(frameDetections);
+        drawDetections(frameDetections);
+        if (Array.isArray(output)) {
+          output.forEach((t) => t.dispose());
+        } else {
+          output.dispose();
+        }
+      } catch (error) {
+        setStatus(`Inference fehlgeschlagen: ${error.message}`, "error");
+        cancelAnimationFrame(animationFrameId);
+      } finally {
+        input.dispose();
+      }
+
+      await tf.nextFrame();
+      animationFrameId = requestAnimationFrame(inferFrame);
+    }
+
+    async function loadModel() {
+      const tf = await tfReady;
+      setStatus("Lade TF.js-Modell...");
+      model = await tf.loadGraphModel(MODEL_URL);
+      setStatus("Modell geladen. Webcam kann gestartet werden.", "ok");
+    }
+
+    async function startWebcam() {
+      if (!model) {
+        await loadModel();
+      }
+
+      setStatus("Oeffne Webcam...");
+      stopStream();
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: cameraSelect.value ? { exact: cameraSelect.value } : undefined,
+          facingMode: cameraSelect.value ? undefined : "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+
+      video.srcObject = stream;
+      await video.play();
+      await populateCameraList();
+      resizeCanvas();
+      setStatus("Webcam aktiv. Inferenz laeuft.", "ok");
+      startButton.disabled = true;
+      stopButton.disabled = false;
+
+      if (!animationFrameId) {
+        inferFrame();
+      }
+    }
+
+    startButton.addEventListener("click", async () => {
+      try {
+        await startWebcam();
+      } catch (error) {
+        setStatus(`Start fehlgeschlagen: ${error.message}`, "error");
+      }
+    });
+
+    stopButton.addEventListener("click", () => {
+      stopInference();
+    });
+
+    cameraSelect.addEventListener("change", async () => {
+      if (!stream) {
+        return;
+      }
+      try {
+        await startWebcam();
+      } catch (error) {
+        setStatus(`Kamerawechsel fehlgeschlagen: ${error.message}`, "error");
+      }
+    });
+
+    window.addEventListener("resize", resizeCanvas);
+
+    (async () => {
+      try {
+        tfReady = ensureTf();
+        await tfReady;
+        await populateCameraList();
+        setStatus("TensorFlow.js geladen. Modell noch nicht geladen.");
+      } catch (error) {
+        setStatus(`${error.message}`, "error");
+      }
+    })();
+  </script>
+</body>
+</html>

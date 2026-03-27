@@ -1,4 +1,6 @@
 .venv
+.venv_3.12
+.venv_3.11
 .pycache
 *.pt
 mobileclip_blt.ts

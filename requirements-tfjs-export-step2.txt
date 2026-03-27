@@ -1,0 +1,13 @@
+ultralytics==8.4.30
+tensorflow==2.15.1
+tensorflow-decision-forests==1.8.1
+tensorflowjs==4.22.0
+onnx>=1.12.0,<1.19
+onnx2tf==1.28.2
+tf_keras
+sng4onnx
+onnx_graphsurgeon
+ai-edge-litert
+onnxslim
+onnxruntime
+protobuf<5
