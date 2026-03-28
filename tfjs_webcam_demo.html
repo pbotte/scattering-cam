@@ -124,6 +124,10 @@
       color: var(--danger);
     }
 
+    .debug-panel[hidden] {
+      display: none;
+    }
+
     code {
       color: #bfdbfe;
     }
@@ -135,7 +139,7 @@
       <h1>YOLO TensorFlow.js Webcam Demo</h1>
       <p>
         Laedt das exportierte Modell aus
-        <code>runs/detect/runs/train/yolo26m-custom/weights/best_web_model/model.json</code>
+        <code id="modelPath"></code>
         und fuehrt Live-Erkennung auf der Webcam aus.
       </p>
       <p style="margin-top: 8px; color: #67e8f9;">Version: v12</p>
@@ -150,8 +154,12 @@
       </label>
       <label>
         Confidence
-        <input id="confidence" type="range" min="0.05" max="0.95" step="0.05" value="0.25">
+        <input id="confidence" type="range" min="0.01" max="0.95" step="0.01" value="0.25">
         <span id="confidenceValue">0.25</span>
+      </label>
+      <label>
+        Debug
+        <input id="debugToggle" type="checkbox">
       </label>
       <span id="fps">FPS: -</span>
       <span id="status">Modell noch nicht geladen.</span>
@@ -162,7 +170,7 @@
       <canvas id="overlay"></canvas>
     </section>
 
-    <section class="panel">
+    <section class="panel debug-panel" id="debugPanel" hidden>
       <p id="debugSummary">Noch keine Inferenzdaten.</p>
       <pre id="debugOutput" style="margin-top: 12px; white-space: pre-wrap; color: #cbd5e1;"></pre>
     </section>
@@ -174,7 +182,7 @@
       "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js",
       "https://unpkg.com/@tensorflow/tfjs@4.22.0/dist/tf.min.js"
     ];
-    const MODEL_URL = "./runs/detect/runs/train/yolo26m-custom/weights/best_web_model/model.json";
+    const MODEL_URL = "./runs/detect/runs/train/yolo26m-custom2/weights/best_web_model/model.json";
     const INPUT_SIZE = 640;
     const video = document.getElementById("video");
     const canvas = document.getElementById("overlay");
@@ -187,8 +195,11 @@
     const fpsEl = document.getElementById("fps");
     const confidenceInput = document.getElementById("confidence");
     const confidenceValue = document.getElementById("confidenceValue");
+    const debugToggle = document.getElementById("debugToggle");
+    const debugPanel = document.getElementById("debugPanel");
     const debugSummary = document.getElementById("debugSummary");
     const debugOutput = document.getElementById("debugOutput");
+    const modelPathEl = document.getElementById("modelPath");
 
     let model;
     let animationFrameId = 0;
@@ -197,8 +208,14 @@
     let lastInferenceAt = 0;
     const classNames = {0: "sphere"};
 
+    modelPathEl.textContent = MODEL_URL.replace(/^\.\//, "");
+
     confidenceInput.addEventListener("input", () => {
       confidenceValue.textContent = Number(confidenceInput.value).toFixed(2);
+    });
+
+    debugToggle.addEventListener("change", () => {
+      debugPanel.hidden = !debugToggle.checked;
     });
 
     function loadScript(src) {
@@ -266,6 +283,64 @@
         `Input: ${INPUT_SIZE}, Rohdetektionen: ${detections.length}, max score: ${maxScore.toFixed(4)}, ` +
         `ueber Schwellwert: ${visibleCount}`;
       debugOutput.textContent = JSON.stringify(detections.slice(0, 8).map(formatDetection), null, 2);
+    }
+
+    function transposeRows(matrix) {
+      const rowCount = matrix.length;
+      const columnCount = matrix[0]?.length || 0;
+      const rows = [];
+      for (let columnIndex = 0; columnIndex < columnCount; columnIndex += 1) {
+        const row = [];
+        for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+          row.push(matrix[rowIndex][columnIndex]);
+        }
+        rows.push(row);
+      }
+      return rows;
+    }
+
+    function normalizeDetections(rawDetections) {
+      let detections = rawDetections;
+
+      while (
+        Array.isArray(detections) &&
+        detections.length === 1 &&
+        Array.isArray(detections[0])
+      ) {
+        detections = detections[0];
+      }
+
+      if (!Array.isArray(detections) || !detections.length) {
+        return [];
+      }
+
+      if (typeof detections[0] === "number") {
+        return detections.length >= 6 ? [detections.slice(0, 6)] : [];
+      }
+
+      if (!Array.isArray(detections[0])) {
+        return [];
+      }
+
+      let rows = detections;
+      const firstRowLength = rows[0]?.length || 0;
+
+      if (rows.length >= 5 && rows.length <= 8 && firstRowLength > rows.length) {
+        rows = transposeRows(rows);
+      }
+
+      return rows
+        .filter((row) => Array.isArray(row) && row.length >= 6)
+        .map((row) => row.slice(0, 6).map((value) => Number(value)));
+    }
+
+    function pickDetectionTensor(output) {
+      const tensors = Array.isArray(output) ? output : [output];
+      const candidates = tensors.filter((tensor) => tensor && tensor.dtype === "float32" && tensor.rank >= 2);
+      if (candidates.length) {
+        return candidates.sort((left, right) => right.size - left.size)[0];
+      }
+      return tensors[0];
     }
 
     function stopStream() {
@@ -366,9 +441,9 @@
 
       try {
         const output = model.execute(input);
-        const tensor = Array.isArray(output) ? output[0] : output;
+        const tensor = pickDetectionTensor(output);
         const detections = await tensor.array();
-        const frameDetections = detections[0] || [];
+        const frameDetections = normalizeDetections(detections);
         updateDebug(frameDetections);
         drawDetections(frameDetections);
         if (Array.isArray(output)) {

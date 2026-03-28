@@ -3,6 +3,7 @@ import argparse
 import importlib.util
 import os
 import sys
+import types
 from importlib import metadata
 from pathlib import Path
 
@@ -64,6 +65,21 @@ def ensure_local_ultralytics_config(project_root: Path) -> None:
     os.environ.setdefault("YOLO_CONFIG_DIR", str(config_dir))
 
 
+def install_pathlib_local_compat() -> None:
+    """Allow unpickling checkpoints saved with Python 3.13's pathlib internals."""
+    if "pathlib._local" in sys.modules:
+        return
+
+    import pathlib
+
+    shim = types.ModuleType("pathlib._local")
+    shim.Path = pathlib.Path
+    shim.PosixPath = pathlib.PosixPath
+    shim.WindowsPath = pathlib.WindowsPath
+    sys.modules["pathlib._local"] = shim
+    setattr(pathlib, "_local", shim)
+
+
 def require_module(module_name: str, install_hint: str) -> None:
     if importlib.util.find_spec(module_name) is None:
         raise RuntimeError(install_hint)
@@ -114,6 +130,7 @@ def main() -> int:
     args = parse_args()
     project_root = Path(__file__).resolve().parent
     ensure_local_ultralytics_config(project_root)
+    install_pathlib_local_compat()
 
     model_path = args.model.resolve()
     if not model_path.is_file():

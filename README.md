@@ -122,12 +122,13 @@ Das trainierte Modell kann auch als TensorFlow.js-Modell im Browser genutzt werd
 Der Export erzeugt das Browser-Modell unter:
 
 ```text
-runs/detect/runs/train/yolo26m-custom/weights/best_web_model
+runs/detect/runs/train/yolo26m-*/weights/best_web_model
 ```
 
 Export aus einer kompatiblen Python-Umgebung:
 
 ```bash
+. .venv_3.11/bin/activate
 python export_yolo_tfjs.py --model runs/detect/runs/train/yolo26m-custom/weights/best.pt
 ```
 
