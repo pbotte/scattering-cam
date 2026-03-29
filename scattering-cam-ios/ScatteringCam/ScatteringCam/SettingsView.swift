@@ -15,6 +15,7 @@ struct SettingsView: View {
     @Binding var trailDuration: TrailDurationOption
     @Binding var centerCropEnabled: Bool
     @Binding var selectedCamera: CameraOption
+    @Binding var cameraFPS: CameraFPSOption
 
     var body: some View {
         NavigationStack {
@@ -28,6 +29,12 @@ struct SettingsView: View {
                     .pickerStyle(.segmented)
 
                     Toggle("640x640 Ausschnitt", isOn: $centerCropEnabled)
+
+                    Picker("FPS", selection: $cameraFPS) {
+                        ForEach(CameraFPSOption.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
                 }
 
                 Section("Erkennung") {

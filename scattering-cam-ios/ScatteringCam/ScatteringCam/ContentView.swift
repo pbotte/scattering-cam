@@ -68,6 +68,10 @@ struct ContentView: View {
                 selectedCamera: Binding(
                     get: { camera.selectedCamera },
                     set: { camera.updateSelectedCamera($0) }
+                ),
+                cameraFPS: Binding(
+                    get: { camera.cameraFPS },
+                    set: { camera.updateCameraFPS($0) }
                 )
             )
         }
@@ -125,6 +129,7 @@ struct ContentView: View {
                 debugLine("Modell", camera.debugInfo.modelName)
                 debugLine("Modell geladen", camera.debugInfo.isModelLoaded ? "ja" : "nein")
                 debugLine("Kamera", camera.debugInfo.cameraTitle)
+                debugLine("Kamera FPS", camera.debugInfo.cameraFPSText)
                 debugLine("Bildgroesse", camera.debugInfo.imageSizeText)
                 debugLine("Center Crop", camera.debugInfo.centerCropEnabled ? "ja" : "nein")
                 debugLine("Model FPS", "\(camera.debugInfo.modelFPSText) FPS")
@@ -191,6 +196,7 @@ final class CameraViewModel: ObservableObject {
     @Published private(set) var trailDuration: TrailDurationOption = .off
     @Published private(set) var centerCropEnabled = true
     @Published private(set) var selectedCamera: CameraOption = .back
+    @Published private(set) var cameraFPS: CameraFPSOption = .fps30
     @Published private(set) var trails: [TrackTrail] = []
     @Published private(set) var debugInfo = DebugInfo(
         modelName: "best",
@@ -209,10 +215,12 @@ final class CameraViewModel: ObservableObject {
         debugInfo.trailDuration = trailDuration
         debugInfo.centerCropEnabled = centerCropEnabled
         debugInfo.selectedCamera = selectedCamera
+        debugInfo.cameraFPS = cameraFPS
         captureController.updateCenterCropEnabled(centerCropEnabled)
         captureController.updateMaxMissedFramesForTracking(maxMissedFramesForTracking)
         captureController.updateTrailDuration(trailDuration.duration)
         captureController.updateSelectedCamera(selectedCamera)
+        captureController.updateCameraFPS(cameraFPS)
     }
 
     var captureSession: AVCaptureSession {
@@ -265,6 +273,13 @@ final class CameraViewModel: ObservableObject {
         selectedCamera = cameraOption
         debugInfo.selectedCamera = cameraOption
         captureController.updateSelectedCamera(cameraOption)
+    }
+
+    func updateCameraFPS(_ option: CameraFPSOption) {
+        guard cameraFPS != option else { return }
+        cameraFPS = option
+        debugInfo.cameraFPS = option
+        captureController.updateCameraFPS(option)
     }
 
     func pauseForSettings() {
@@ -365,6 +380,7 @@ final class CameraCaptureController: NSObject, @unchecked Sendable {
     private var smoothedFPS: Double = 0
     private var centerCropEnabled = true
     private var selectedCamera: CameraOption = .back
+    private var cameraFPS: CameraFPSOption = .fps30
     private var maxMissedFramesForTracking = 6
     private var trailDuration: TimeInterval = 0
     private var currentCameraInput: AVCaptureDeviceInput?
@@ -405,6 +421,7 @@ final class CameraCaptureController: NSObject, @unchecked Sendable {
                     confidenceThreshold: Double(self.currentConfidenceThreshold),
                     centerCropEnabled: self.currentCenterCropEnabled,
                     selectedCamera: cameraOption,
+                    cameraFPS: self.currentCameraFPS,
                     maxMissedFramesForTracking: self.currentMaxMissedFramesForTracking,
                     trailDuration: self.currentTrailDurationOption
                 )
@@ -435,6 +452,49 @@ final class CameraCaptureController: NSObject, @unchecked Sendable {
         }
     }
 
+    func updateCameraFPS(_ option: CameraFPSOption) {
+        cameraFPS = option
+
+        Task { @MainActor in
+            delegate?.cameraCaptureController(
+                self,
+                didUpdateDebugInfo: DebugInfo(
+                    modelName: self.modelName,
+                    isModelLoaded: self.coreMLModel != nil,
+                    confidenceThreshold: Double(self.currentConfidenceThreshold),
+                    centerCropEnabled: self.currentCenterCropEnabled,
+                    selectedCamera: self.currentSelectedCamera,
+                    cameraFPS: option,
+                    maxMissedFramesForTracking: self.currentMaxMissedFramesForTracking,
+                    trailDuration: self.currentTrailDurationOption
+                )
+            )
+        }
+
+        guard didConfigureSession else { return }
+
+        sessionQueue.async {
+            do {
+                try self.applyPreferredFrameRate()
+                Task { @MainActor in
+                    self.delegate?.cameraCaptureController(
+                        self,
+                        didUpdateStatus: "Kamera aktiv. Live-Bild wird analysiert.",
+                        errorMessage: nil
+                    )
+                }
+            } catch {
+                Task { @MainActor in
+                    self.delegate?.cameraCaptureController(
+                        self,
+                        didUpdateStatus: "FPS-Aenderung fehlgeschlagen",
+                        errorMessage: error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
     func configureIfNeeded() async throws {
         guard !didConfigureSession else { return }
 
@@ -454,6 +514,7 @@ final class CameraCaptureController: NSObject, @unchecked Sendable {
                     confidenceThreshold: Double(self.currentConfidenceThreshold),
                     centerCropEnabled: self.currentCenterCropEnabled,
                     selectedCamera: self.currentSelectedCamera,
+                    cameraFPS: self.currentCameraFPS,
                     maxMissedFramesForTracking: self.currentMaxMissedFramesForTracking,
                     trailDuration: self.currentTrailDurationOption
                 )
@@ -559,6 +620,7 @@ final class CameraCaptureController: NSObject, @unchecked Sendable {
                     confidenceThreshold: Double(self.currentConfidenceThreshold),
                     centerCropEnabled: self.currentCenterCropEnabled,
                     selectedCamera: self.currentSelectedCamera,
+                    cameraFPS: self.currentCameraFPS,
                     maxMissedFramesForTracking: self.currentMaxMissedFramesForTracking,
                     trailDuration: self.currentTrailDurationOption,
                     imageSize: liveImageSize,
@@ -586,6 +648,7 @@ final class CameraCaptureController: NSObject, @unchecked Sendable {
 
         session.addInput(cameraInput)
         currentCameraInput = cameraInput
+        try configureDevice(device)
     }
 
     private func replaceCameraInputIfNeeded() throws {
@@ -614,12 +677,17 @@ final class CameraCaptureController: NSObject, @unchecked Sendable {
         session.addInput(newInput)
         configureVideoConnection()
         currentCameraInput = newInput
+        try configureDevice(device)
         resetTracking()
     }
 
     private func configureVideoConnection() {
         guard let connection = videoOutput.connection(with: .video) else { return }
         connection.videoRotationAngle = 90
+    }
+
+    private func configureDevice(_ device: AVCaptureDevice) throws {
+        try applyPreferredFrameRate(to: device)
     }
 
     private func resetTracking() {
@@ -657,6 +725,54 @@ final class CameraCaptureController: NSObject, @unchecked Sendable {
         }
 
         throw CameraError.noCameraAvailable(position: option)
+    }
+
+    private func applyPreferredFrameRate() throws {
+        guard let device = currentCameraInput?.device else { return }
+        try applyPreferredFrameRate(to: device)
+    }
+
+    private func applyPreferredFrameRate(to device: AVCaptureDevice) throws {
+        let preferredFPS = Double(cameraFPS.value)
+        let rankedFormat = supportedFormats(for: device, preferredFPS: preferredFPS)
+            .max { lhs, rhs in
+                if lhs.score == rhs.score {
+                    return CMVideoFormatDescriptionGetDimensions(lhs.format.formatDescription).width <
+                        CMVideoFormatDescriptionGetDimensions(rhs.format.formatDescription).width
+                }
+                return lhs.score < rhs.score
+            }
+
+        guard let rankedFormat else {
+            throw CameraError.unsupportedFrameRate(cameraFPS, camera: selectedCamera)
+        }
+
+        try device.lockForConfiguration()
+        defer { device.unlockForConfiguration() }
+
+        device.activeFormat = rankedFormat.format
+        let frameDuration = CMTime(value: 1, timescale: CMTimeScale(cameraFPS.value))
+        device.activeVideoMinFrameDuration = frameDuration
+        device.activeVideoMaxFrameDuration = frameDuration
+    }
+
+    private func supportedFormats(
+        for device: AVCaptureDevice,
+        preferredFPS: Double
+    ) -> [(format: AVCaptureDevice.Format, score: Int)] {
+        device.formats.compactMap { format in
+            let supportsFPS = format.videoSupportedFrameRateRanges.contains { range in
+                range.minFrameRate <= preferredFPS && preferredFPS <= range.maxFrameRate
+            }
+
+            guard supportsFPS else { return nil }
+
+            let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            let subtype = CMFormatDescriptionGetMediaSubType(format.formatDescription)
+            let pixelFormatBonus = subtype == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+                subtype == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ? 10_000 : 0
+            return (format, Int(dimensions.width) + pixelFormatBonus)
+        }
     }
 }
 
@@ -706,6 +822,10 @@ private extension CameraCaptureController {
 
     var currentSelectedCamera: CameraOption {
         selectedCamera
+    }
+
+    var currentCameraFPS: CameraFPSOption {
+        cameraFPS
     }
 
     var currentMaxMissedFramesForTracking: Int {
@@ -1293,6 +1413,7 @@ struct DebugInfo: Sendable {
     var confidenceThreshold: Double = 0.35
     var centerCropEnabled = false
     var selectedCamera: CameraOption = .back
+    var cameraFPS: CameraFPSOption = .fps30
     var maxMissedFramesForTracking = 6
     var trailDuration: TrailDurationOption = .off
     var imageSize: CGSize = .zero
@@ -1313,6 +1434,10 @@ struct DebugInfo: Sendable {
 
     var cameraTitle: String {
         selectedCamera.title
+    }
+
+    var cameraFPSText: String {
+        cameraFPS.title
     }
 
     var topPredictionText: String {
@@ -1394,6 +1519,7 @@ private enum CameraError: LocalizedError {
     case noCameraAvailable(position: CameraOption)
     case cannotAddInput
     case cannotAddOutput
+    case unsupportedFrameRate(CameraFPSOption, camera: CameraOption)
 
     var errorDescription: String? {
         switch self {
@@ -1403,7 +1529,34 @@ private enum CameraError: LocalizedError {
             return "Kamera-Input konnte der Session nicht hinzugefuegt werden."
         case .cannotAddOutput:
             return "Video-Output konnte der Session nicht hinzugefuegt werden."
+        case .unsupportedFrameRate(let fps, let camera):
+            return "\(fps.title) wird von '\(camera.title)' nicht unterstuetzt."
         }
+    }
+}
+
+enum CameraFPSOption: Int, CaseIterable, Identifiable, Sendable {
+    case fps1 = 1
+    case fps2 = 2
+    case fps5 = 5
+    case fps10 = 10
+    case fps15 = 15
+    case fps24 = 24
+    case fps25 = 25
+    case fps30 = 30
+    case fps48 = 48
+    case fps50 = 50
+    case fps60 = 60
+    case fps90 = 90
+    case fps120 = 120
+    case fps240 = 240
+
+    var id: Int { rawValue }
+
+    var value: Int { rawValue }
+
+    var title: String {
+        "\(rawValue) FPS"
     }
 }
 

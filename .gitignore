@@ -7,3 +7,4 @@ mobileclip_blt.ts
 dataset/.DS_Store
 /runs/*
 .DS_Store
+.deriveddata/*
