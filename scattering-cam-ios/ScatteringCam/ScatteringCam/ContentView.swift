@@ -192,7 +192,7 @@ final class CameraViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var imageSize: CGSize = .zero
     @Published private(set) var confidenceThreshold: Double = 0.35
-    @Published private(set) var maxMissedFramesForTracking = 6
+    @Published private(set) var maxMissedFramesForTracking = defaultTrackToleranceValue
     @Published private(set) var trailDuration: TrailDurationOption = .off
     @Published private(set) var centerCropEnabled = true
     @Published private(set) var selectedCamera: CameraOption = .back
@@ -253,10 +253,10 @@ final class CameraViewModel: ObservableObject {
     }
 
     func updateMaxMissedFramesForTracking(_ value: Int) {
-        let clampedValue = min(max(value, 0), 20)
-        maxMissedFramesForTracking = clampedValue
-        captureController.updateMaxMissedFramesForTracking(clampedValue)
-        debugInfo.maxMissedFramesForTracking = clampedValue
+        let snappedValue = snappedTrackToleranceValue(value)
+        maxMissedFramesForTracking = snappedValue
+        captureController.updateMaxMissedFramesForTracking(snappedValue)
+        debugInfo.maxMissedFramesForTracking = snappedValue
     }
 
     func updateTrailDuration(_ option: TrailDurationOption) {
@@ -381,7 +381,7 @@ final class CameraCaptureController: NSObject, @unchecked Sendable {
     private var centerCropEnabled = true
     private var selectedCamera: CameraOption = .back
     private var cameraFPS: CameraFPSOption = .fps30
-    private var maxMissedFramesForTracking = 6
+    private var maxMissedFramesForTracking = defaultTrackToleranceValue
     private var trailDuration: TimeInterval = 0
     private var currentCameraInput: AVCaptureDeviceInput?
     private var trackedObjects: [TrackedObject] = []
@@ -1414,7 +1414,7 @@ struct DebugInfo: Sendable {
     var centerCropEnabled = false
     var selectedCamera: CameraOption = .back
     var cameraFPS: CameraFPSOption = .fps30
-    var maxMissedFramesForTracking = 6
+    var maxMissedFramesForTracking = defaultTrackToleranceValue
     var trailDuration: TrailDurationOption = .off
     var imageSize: CGSize = .zero
     var rawObservationCount = 0
@@ -1558,6 +1558,20 @@ enum CameraFPSOption: Int, CaseIterable, Identifiable, Sendable {
     var title: String {
         "\(rawValue) FPS"
     }
+}
+
+let supportedTrackToleranceValues = [0, 1, 2, 5, 10, 15, 25, 30, 60, 120, 240]
+let defaultTrackToleranceValue = 5
+
+func snappedTrackToleranceValue(_ value: Int) -> Int {
+    supportedTrackToleranceValues.min { lhs, rhs in
+        let lhsDistance = abs(lhs - value)
+        let rhsDistance = abs(rhs - value)
+        if lhsDistance == rhsDistance {
+            return lhs < rhs
+        }
+        return lhsDistance < rhsDistance
+    } ?? defaultTrackToleranceValue
 }
 
 enum CameraOption: String, CaseIterable, Identifiable, Sendable {

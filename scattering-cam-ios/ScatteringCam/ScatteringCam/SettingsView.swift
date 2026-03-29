@@ -52,11 +52,9 @@ struct SettingsView: View {
                         )
                     }
 
-                    Stepper(value: $maxMissedFramesForTracking, in: 0...20) {
-                        LabeledContent("Track-Toleranz") {
-                            Text("\(maxMissedFramesForTracking) Frames")
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
+                    Picker("Track-Toleranz", selection: $maxMissedFramesForTracking) {
+                        ForEach(supportedTrackToleranceValues, id: \.self) { value in
+                            Text("\(value) Frames").tag(value)
                         }
                     }
 
